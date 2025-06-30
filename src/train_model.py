@@ -1,14 +1,26 @@
 # src/train_model.py
 
 import os
+import sys
 import joblib
 import xgboost as xgb
+import pandas as pd
 from sklearn.metrics import accuracy_score, roc_auc_score
+
+# ─── Ensure src folder is importable ─────────────────────────────
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.data_prep import load_and_prepare_data
 
-def train_and_save_model(data_path, model_path="demo/model_xgb.pkl"):
-    (X_train, X_test, y_train, y_test), encoders = load_and_prepare_data(data_path)
+def train_and_save_model(data_path, model_path="results/model_xgb.pkl"):
+    print(f"[📂] Loading dataset: {data_path}")
+    try:
+        (X_train, X_test, y_train, y_test), encoders = load_and_prepare_data(data_path)
+    except ValueError as ve:
+        print(f"[❌] {ve}")
+        print("[ℹ️] Make sure your dataset has a 'loan_approved' column as the target.")
+        return
 
+    print("[⚙️] Training model...")
     model = xgb.XGBClassifier(
         use_label_encoder=False,
         eval_metric='logloss',
@@ -16,6 +28,7 @@ def train_and_save_model(data_path, model_path="demo/model_xgb.pkl"):
     )
     model.fit(X_train, y_train)
 
+    print("[📈] Evaluating model...")
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]
 
