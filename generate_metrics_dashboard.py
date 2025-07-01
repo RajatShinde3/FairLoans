@@ -5,29 +5,44 @@ Creates ROC, PR, confusion‑matrix plots + a markdown report
 for baseline and debiased predictions.
 """
 
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os
 from sklearn.metrics import (
     roc_curve, auc, precision_recall_curve,
     confusion_matrix, ConfusionMatrixDisplay,
     classification_report
 )
 
+# ───────────── Config ─────────────
 BASELINE = "results/baseline_predictions.csv"
 DEBIASED = "results/debiased_predictions.csv"
 OUT_DIR = "results"
 REPORT = os.path.join(OUT_DIR, "metrics_report.md")
 os.makedirs(OUT_DIR, exist_ok=True)
 
+# ───────────── Helpers ─────────────
 def load(path):
     df = pd.read_csv(path)
+
+    # Normalize y_true
+    if df["y_true"].dtype == object:
+        df["y_true"] = df["y_true"].str.strip().map({"Approved": 1, "Denied": 0})
+    df["y_true"] = pd.to_numeric(df["y_true"], errors="coerce").astype("Int64")
+
+    # Normalize y_pred
+    df["y_pred"] = pd.to_numeric(df["y_pred"], errors="coerce").astype("Int64")
+
+    # Normalize y_prob
+    if "y_prob" in df.columns:
+        df["y_prob"] = pd.to_numeric(df["y_prob"], errors="coerce")
+
     return df["y_true"], df["y_pred"], df.get("y_prob")
 
 def plot_roc(y, p, tag):
     if pd.isna(p).any():
-        print(f"[⚠️] Skipping ROC plot for {tag} — contains NaN in y_prob")
+        print(f"[⚠️] Skipping ROC plot for {tag} — contains NaNs in y_prob")
         return
     fpr, tpr, _ = roc_curve(y, p)
     plt.figure()
@@ -42,7 +57,7 @@ def plot_roc(y, p, tag):
 
 def plot_pr(y, p, tag):
     if pd.isna(p).any():
-        print(f"[⚠️] Skipping PR plot for {tag} — contains NaN in y_prob")
+        print(f"[⚠️] Skipping PR plot for {tag} — contains NaNs in y_prob")
         return
     prec, rec, _ = precision_recall_curve(y, p)
     plt.figure()
@@ -67,22 +82,17 @@ def add_report(y, pred, tag):
 
 def run_for(tag, path):
     y, pred, prob = load(path)
-
-    # Normalize y and pred
-    if y.dtype == object:
-        y = y.str.strip().map({"Approved": 1, "Denied": 0})
-    y = pd.to_numeric(y, errors="coerce").astype(int)
-    pred = pd.to_numeric(pred, errors="coerce").astype(int)
-
     add_report(y, pred, tag)
 
-    if prob is not None:
-        prob = pd.to_numeric(prob, errors="coerce")
+    if prob is not None and prob.notna().all():
         plot_roc(y, prob, tag)
         plot_pr(y, prob, tag)
+    else:
+        print(f"[⚠️] Skipping ROC/PR for {tag} — y_prob is missing or contains NaNs")
 
     plot_cm(y, pred, tag)
 
+# ───────────── Run Script ─────────────
 if __name__ == "__main__":
     with open(REPORT, "w", encoding="utf-8") as f:
         f.write("# 📈 Model Evaluation Report\n\n")

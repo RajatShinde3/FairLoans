@@ -1,50 +1,76 @@
 # scripts/generate_debiased_predictions.py
-
-import pandas as pd
-import joblib
 import os
+import joblib
+import pandas as pd
+import numpy as np
+from pathlib import Path
 
-print("📥  Loading debiased model & dataset...")
+# ───────────── Paths ─────────────
+DATA_PATH = Path("data/loan_dataset.csv")
+MODEL_PATH = Path("results/model_debiased_xgb.pkl")
+OUT_PATH = Path("results/debiased_predictions.csv")
 
-# Load debiased model and feature list
-model = joblib.load("results/model_debiased_xgb.pkl")
-model_features = joblib.load("results/debiased_model_features.pkl")
+# ───────────── Load dataset ─────
+print("📥  Loading dataset...")
+if not DATA_PATH.exists():
+    raise FileNotFoundError("Dataset not found at data/loan_dataset.csv")
 
-# Load and clean dataset
-df = pd.read_csv("data/loan_dataset.csv").dropna()
-df.columns = df.columns.str.strip().str.lower()
+df = pd.read_csv(DATA_PATH)
 
-# Map 'loan_approved' to 0/1 if it's still in string form
-if df['loan_approved'].dtype == object:
-    df['loan_approved'] = df['loan_approved'].str.strip().map({
-        "Approved": 1,
-        "Denied": 0
-    })
+# ───────────── Preprocessing ────
+print("🔤  Encoding categorical variables...")
+df_enc = pd.get_dummies(df.drop(columns=["id"]), drop_first=True)
 
-# Feature columns
-features = ['age', 'income', 'loan_amount', 'credit_score', 'gender', 'race', 'zip_code_group']
-X = df[features]
-y = df['loan_approved']
+# Target variable
+y = df["loan_approved"]
+X = df_enc.drop(columns=["loan_approved"], errors="ignore")
 
-# One-hot encoding
-X_encoded = pd.get_dummies(X)
+# ───────────── Load model ───────
+print("📦  Loading debiased model...")
+if not MODEL_PATH.exists():
+    raise FileNotFoundError("Debiased model not found. Train it first.")
 
-# Align with training features
-for col in model_features:
-    if col not in X_encoded.columns:
-        X_encoded[col] = 0
-X_encoded = X_encoded[model_features]
+model = joblib.load(MODEL_PATH)
 
-# Predict using fair model
-y_pred = model.predict(X_encoded)
+# ───────────── Align features ───
+if hasattr(model, "get_booster"):  # XGBoost-style model
+    model_feats = model.get_booster().feature_names
+    for col in model_feats:
+        if col not in X.columns:
+            X[col] = 0
+    X = X[model_feats]
+elif hasattr(model, "feature_names_in_"):  # sklearn wrapper
+    model_feats = model.feature_names_in_
+    for col in model_feats:
+        if col not in X.columns:
+            X[col] = 0
+    X = X[model_feats]
+else:
+    raise ValueError("Unsupported model format")
 
-# Save predictions (no y_prob because Fairlearn doesn’t provide probabilities)
-results = pd.DataFrame({
-    'y_true': y,
-    'y_pred': y_pred,
-    'y_prob': [None] * len(y)  # Placeholder
-})
+# ───────────── Predict ──────────
+print("🧠  Making predictions...")
+y_pred = model.predict(X)
 
-os.makedirs("results", exist_ok=True)
-results.to_csv("results/debiased_predictions.csv", index=False)
-print("✅ Saved to results/debiased_predictions.csv")
+# Try to get y_prob
+try:
+    y_prob = model.predict_proba(X)[:, 1]
+    print("✅  Model supports predict_proba.")
+except (AttributeError, NotImplementedError):
+    y_prob = None
+    print("⚠️  Model does NOT support predict_proba.")
+
+# ───────────── Save results ─────
+print("💾  Saving predictions...")
+result_dict = {
+    "y_true": y,
+    "y_pred": y_pred
+}
+if y_prob is not None:
+    result_dict["y_prob"] = y_prob
+
+df_out = pd.DataFrame(result_dict)
+
+OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+df_out.to_csv(OUT_PATH, index=False)
+print(f"✅  Saved to {OUT_PATH}")

@@ -1,86 +1,61 @@
-"""
-generate_predictions.py
------------------------
-
-Usage
------
-
-Baseline:      python generate_predictions.py
-Debiased:      python generate_predictions.py --model results/model_debiased_xgb.pkl \
-                                              --output results/deb_predictions.csv
-With submit:   python generate_predictions.py --submit
-
-Arguments
----------
-
---model   Path to a *.pkl* model.   [default: results/model_xgb.pkl]
---data    Dataset CSV (must include loan_approved). [default: data/loan_dataset.csv]
---output  Where to save prediction CSV. [default: results/baseline_predictions.csv]
---submit  Also write Devpost‑style `submission.csv` (ID + LoanApproved)
-"""
+# scripts/generate_predictions.py
 
 import pandas as pd
 import joblib
-import argparse
 import os
-from pathlib import Path
 
-def main(model_path, data_path, out_path, write_submit):
+print("📥 Loading trained model & dataset...")
 
-    # ── 1. Load model & data ───────────────────────────────────────────
-    print(f"📥  Model: {model_path}")
-    model = joblib.load(model_path)
+# Load model
+model = joblib.load("results/model_xgb.pkl")
 
-    print(f"📥  Data : {data_path}")
-    df = pd.read_csv(data_path).dropna()
-    df.columns = df.columns.str.strip().str.lower()
+# Load dataset
+df = pd.read_csv("data/loan_dataset.csv").dropna()
+df.columns = df.columns.str.strip().str.lower()
 
-    # ── 2. Expected columns ────────────────────────────────────────────
-    features = ['age', 'income', 'loan_amount', 'credit_score',
-                'gender', 'race', 'zip_code_group']
-    target = 'loan_approved'
+# Convert target to binary if needed
+if df['loan_approved'].dtype == object:
+    df['loan_approved'] = df['loan_approved'].str.strip().map({
+        "Approved": 1,
+        "Denied": 0
+    })
 
-    missing = [c for c in features + [target] if c not in df.columns]
-    if missing:
-        raise ValueError(f"❌ Missing columns in dataset: {missing}")
+# Final check
+if df['loan_approved'].isnull().any():
+    raise ValueError("❌ Target column 'loan_approved' contains unmapped values (must be 'Approved' or 'Denied')")
 
-    X = pd.get_dummies(df[features])
-    y = df[target]
+# Required features
+features = ['age', 'income', 'loan_amount', 'credit_score', 'gender', 'race', 'zip_code_group']
+missing_cols = [f for f in features if f not in df.columns]
+if missing_cols:
+    raise ValueError(f"❌ Missing required columns: {missing_cols}")
 
-    # align feature order with model
-    model_features = model.get_booster().feature_names
-    for col in model_features:
-        if col not in X:
-            X[col] = 0
-    X = X[model_features]
+# Prepare features
+X = df[features]
+y = df["loan_approved"]
 
-    # ── 3. Predict ─────────────────────────────────────────────────────
-    y_pred = model.predict(X)
-    y_prob = model.predict_proba(X)[:, 1]
+# One-hot encode
+X_encoded = pd.get_dummies(X)
 
-    results = pd.DataFrame({"y_true": y, "y_pred": y_pred, "y_prob": y_prob})
-    Path(out_path).parent.mkdir(exist_ok=True, parents=True)
-    results.to_csv(out_path, index=False)
-    print(f"✅ Prediction file saved → {out_path}")
+# Align with model input
+model_features = model.get_booster().feature_names
+for col in model_features:
+    if col not in X_encoded:
+        X_encoded[col] = 0
+X_encoded = X_encoded[model_features]
 
-    # ── 4. Optional Devpost submission file ────────────────────────────
-    if write_submit:
-        submission = pd.DataFrame({
-            "ID": df.index + 1,
-            "LoanApproved": y_pred.astype(int)
-        })
-        submission.to_csv("submission.csv", index=False)
-        print("✅ Devpost submission file → submission.csv\n"
-              "   (columns: ID, LoanApproved)")
+# Predict
+y_pred = model.predict(X_encoded)
+y_prob = model.predict_proba(X_encoded)[:, 1]
 
-# ── CLI ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate prediction CSVs.")
-    parser.add_argument("--model",  default="results/model_xgb.pkl")
-    parser.add_argument("--data",   default="data/loan_dataset.csv")
-    parser.add_argument("--output", default="results/baseline_predictions.csv")
-    parser.add_argument("--submit", action="store_true",
-                        help="Also create submission.csv (ID, LoanApproved)")
-    args = parser.parse_args()
+# Save results
+results = pd.DataFrame({
+    "y_true": y,
+    "y_pred": y_pred,
+    "y_prob": y_prob
+})
 
-    main(args.model, args.data, args.output, args.submit)
+os.makedirs("results", exist_ok=True)
+results.to_csv("results/baseline_predictions.csv", index=False)
+
+print("✅ Predictions saved to: results/baseline_predictions.csv")

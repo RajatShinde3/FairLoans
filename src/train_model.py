@@ -14,16 +14,20 @@ from src.data_prep import load_and_prepare_data
 def train_and_save_model(data_path, model_path="results/model_xgb.pkl"):
     print(f"[📂] Loading dataset: {data_path}")
     try:
-        (X_train, X_test, y_train, y_test), encoders = load_and_prepare_data(data_path)
+        (X_train, X_test, y_train, y_test), _ = load_and_prepare_data(data_path)
     except ValueError as ve:
         print(f"[❌] {ve}")
-        print("[ℹ️] Make sure your dataset has a 'loan_approved' column as the target.")
         return
 
-    print("[⚙️] Training model...")
+    print("[⚙️] Training XGBoost model...")
     model = xgb.XGBClassifier(
+        n_estimators=200,
+        max_depth=4,
+        learning_rate=0.1,
+        subsample=0.9,
+        colsample_bytree=0.8,
         use_label_encoder=False,
-        eval_metric='logloss',
+        eval_metric="logloss",
         random_state=42
     )
     model.fit(X_train, y_train)
