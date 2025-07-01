@@ -1,3 +1,4 @@
+
 # FairLoans: Auditing and Debiasing Loan Approval Systems for Responsible AI
 
 *A trustworthy, explainable, and bias‑aware pipeline for automated loan approvals.*
@@ -87,31 +88,45 @@ Key fields (tentative): `loan_status`, `applicant_income`, `gender`, `race`, `lo
 
 ```
 FairLoans/
-├── data/                 # raw & processed datasets (git‑ignored)
-├── notebooks/            # exploratory notebooks
-│   ├── 01_explore.ipynb
-│   ├── 02_bias_detect.ipynb
-│   └── 03_mitigate.ipynb
-├── src/                  # reusable modules
+├── data/
+│   └── loan_dataset.csv
+├── results/
+│   ├── model_xgb.pkl
+│   ├── model_debiased_xgb.pkl
+│   ├── shap_explainer.pkl
+│   ├── baseline_predictions.csv
+│   ├── debiased_predictions.csv
+│   ├── debiased_model_features.pkl
+│   └── metrics_report.txt
+├── notebooks/
+│   ├── 01_explore.ipynb 
+│   ├── 02_bias_detect.ipynb 
+│   └── 03_mitigate.ipynb 
+├── scripts/
+│   ├── generate_debiased_predictions.py
+│   └── generate_metrics_dashboard.py
+├── src/
 │   ├── data_prep.py
-│   ├── train_model.py
-│   └── fairness_utils.py
-├── results/              # charts, metrics, model artifacts
-├── demo/                 # demo video & (optional) Streamlit app
-├── requirements.txt
-└── README.md             # you are here
+│   ├── fairness_utils.py
+│   └── train_model.py
+├── dashboard.py 
+├── run_pipeline.py 
+├── run_all.sh 
+├── requirements.txt 
+└── README.md 
+
 ```
 
 ## Quick Start
 
 ```bash
 # Clone repo
-git clone https://github.com/<your‑org>/FairLoans.git
+git clone https://github.com/RajatShinde3/FairLoans.git
 cd FairLoans
 
 # Create environment
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+source venv/bin/activate  # Windows: venv\Scriptsctivate
 pip install -r requirements.txt
 
 # Run first notebook
