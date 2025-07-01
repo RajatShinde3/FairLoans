@@ -213,9 +213,9 @@ with tab_sim:
             credit = st.slider("Credit Score", 300, 850, 650)
         with right:
             loan_amt = st.number_input("Loan Amount", 1000, 100000, 15000, 500)
-            gender = st.radio("Gender", ["Male","Female"])
-            race = st.selectbox("Race", ["White","Black","Asian","Hispanic","Other"])
-            region = st.selectbox("Region", ["Urban","Rural","Suburban"])
+            gender = st.radio("Gender", ["Male", "Female"])
+            race = st.selectbox("Race", ["White", "Black", "Asian", "Hispanic", "Other"])
+            region = st.selectbox("Region", ["Urban", "Rural", "Suburban"])
 
         user = {
             "age": age, "income": income, "loan_amount": loan_amt,
@@ -224,35 +224,57 @@ with tab_sim:
         }
         X_user = pd.DataFrame([user])
 
+        # ───── Baseline model ─────
         try:
             model_base = joblib.load("results/model_xgb.pkl")
-            for col in model_base.get_booster().feature_names:
-                if col not in X_user: X_user[col] = 0
-            X_user = X_user[model_base.get_booster().feature_names]
+            base_feats = model_base.get_booster().feature_names
+            for col in base_feats:
+                if col not in X_user:
+                    X_user[col] = 0
+            X_user = X_user[base_feats]
             prob = model_base.predict_proba(X_user)[0, 1]
-            st.success(f"Baseline → {'✅ Approved' if prob>=0.5 else '❌ Rejected'}  (p={prob:.2f})")
+            st.success(f"Baseline → {'✅ Approved' if prob >= 0.5 else '❌ Rejected'}  (p={prob:.2f})")
         except Exception as e:
             st.error(f"Baseline model error: {e}")
 
+        # ───── Debiased model ─────
         deb_path = Path("results/model_debiased_xgb.pkl")
+        feats_path = Path("results/debiased_model_features.pkl")
+
         if deb_path.exists():
             try:
                 model_deb = joblib.load(deb_path)
-                if hasattr(model_deb, "get_booster"):
-                    for col in model_deb.get_booster().feature_names:
-                        if col not in X_user: X_user[col] = 0
-                    X_user_deb = X_user[model_deb.get_booster().feature_names]
-                else:
-                    for col in model_deb.feature_names_in_:
-                        if col not in X_user: X_user[col] = 0
-                    X_user_deb = X_user[model_deb.feature_names_in_]
 
-                prob_deb = model_deb.predict_proba(X_user_deb)[0, 1]
-                st.info(f"Debiased → {'✅ Approved' if prob_deb>=0.5 else '❌ Rejected'}  (p={prob_deb:.2f})")
+                # ❶ Get features from model or fallback
+                if hasattr(model_deb, "get_booster"):  # XGBoost
+                    deb_feats = model_deb.get_booster().feature_names
+                elif hasattr(model_deb, "feature_names_in_"):  # sklearn
+                    deb_feats = list(model_deb.feature_names_in_)
+                elif feats_path.exists():  # fallback feature list
+                    deb_feats = joblib.load(feats_path)
+                else:
+                    raise ValueError("No feature list found for debiased model.")
+
+                # ❷ Align input
+                for col in deb_feats:
+                    if col not in X_user:
+                        X_user[col] = 0
+                X_user_deb = X_user[deb_feats]
+
+                # ❸ Predict with or without probabilities
+                if hasattr(model_deb, "predict_proba"):
+                    prob_deb = model_deb.predict_proba(X_user_deb)[0, 1]
+                    verdict = '✅ Approved' if prob_deb >= 0.5 else '❌ Rejected'
+                    st.info(f"Debiased → {verdict}  (p={prob_deb:.2f})")
+                else:
+                    pred = model_deb.predict(X_user_deb)[0]
+                    verdict = '✅ Approved' if pred == 1 else '❌ Rejected'
+                    st.info(f"Debiased → {verdict}  (probability unavailable)")
             except Exception as e:
                 st.error(f"Debiased model error: {e}")
         else:
             st.info("Debiased model not found.")
+
 
 # ───────────── Footer ─────────────
 st.markdown("---")
