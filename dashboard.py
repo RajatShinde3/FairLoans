@@ -80,6 +80,7 @@ with tab_over:
     st.info("Upload files to begin!")
 
 # ═════════════ ⚖️ FAIRNESS ═════════════
+# ═════════════ ⚖️ FAIRNESS ═════════════
 with tab_bias:
     st.header("Group‑wise Fairness Metrics")
 
@@ -100,11 +101,6 @@ with tab_bias:
             df = df.dropna(subset=[sens, "y_true", "y_pred"])
             if df.empty:
                 return None
-
-            sensitive = df[sens]
-            y_true = df["y_true"]
-            y_pred = df["y_pred"]
-
             return MetricFrame(
                 metrics={
                     "Accuracy": accuracy_score,
@@ -112,24 +108,22 @@ with tab_bias:
                     "FPR": false_positive_rate,
                     "FNR": false_negative_rate
                 },
-                y_true=y_true,
-                y_pred=y_pred,
-                sensitive_features=sensitive
+                y_true=df["y_true"],
+                y_pred=df["y_pred"],
+                sensitive_features=df[sens]
             )
 
         def compute_overall_fairness(df, sens):
-            y_true = df["y_true"]
-            y_pred = df["y_pred"]
-            sensitive = df[sens]
-
             return {
-                "Demographic Parity Diff": demographic_parity_difference(y_true, y_pred, sensitive_features=sensitive),
-                "Equal Opportunity Diff": equal_opportunity_difference(y_true, y_pred, sensitive_features=sensitive),
-                "FNR Difference": false_negative_rate_difference(y_true, y_pred, sensitive_features=sensitive),
-                "Equalized Odds Diff": equalized_odds_difference(y_true, y_pred, sensitive_features=sensitive)
+                "Demographic Parity Diff": float(demographic_parity_difference(
+                    y_true=df["y_true"], y_pred=df["y_pred"], sensitive_features=df[sens])),
+                "Equal Opportunity Diff": float(equal_opportunity_difference(
+                    y_true=df["y_true"], y_pred=df["y_pred"], sensitive_features=df[sens])),
+                "FNR Difference": float(false_negative_rate_difference(
+                    y_true=df["y_true"], y_pred=df["y_pred"], sensitive_features=df[sens])),
+                "Equalized Odds Diff": float(equalized_odds_difference(
+                    y_true=df["y_true"], y_pred=df["y_pred"], sensitive_features=df[sens]))
             }
-
-
 
         col1, col2 = st.columns(2)
 
@@ -165,16 +159,47 @@ with tab_bias:
             else:
                 st.info("Upload debiased CSV to compare.")
 
+        # 📌 Summary Insights
+        st.markdown("### 📌 Summary Insights")
         if mf_b is not None and mf_d is not None:
-            st.markdown("### 🧯 Fairness Improvement Heatmap")
             try:
-                gap = mf_b.by_group - mf_d.by_group
-                fig_gap, ax_gap = plt.subplots(figsize=(7, 4))
-                sns.heatmap(gap, annot=True, cmap="RdBu", center=0, ax=ax_gap)
-                ax_gap.set_title("Gap Reduction (Baseline − Debiased)")
-                st.pyplot(fig_gap)
-            except:
-                st.warning("Could not compute improvement heatmap.")
+                sr_b = pd.to_numeric(mf_b.by_group["Selection Rate"], errors="coerce")
+                sr_d = pd.to_numeric(mf_d.by_group["Selection Rate"], errors="coerce")
+
+                acc_b = accuracy_score(df_base["y_true"], df_base["y_pred"])
+                acc_d = accuracy_score(df_deb["y_true"], df_deb["y_pred"])
+
+                dp_b = demographic_parity_difference(
+                    y_true=df_base["y_true"], y_pred=df_base["y_pred"], sensitive_features=df_base[sens])
+                dp_d = demographic_parity_difference(
+                    y_true=df_deb["y_true"], y_pred=df_deb["y_pred"], sensitive_features=df_deb[sens])
+
+                comparison_df = pd.DataFrame({
+                    "Baseline Approval Rate": sr_b,
+                    "Debiased Approval Rate": sr_d,
+                    "Improvement": sr_d - sr_b
+                })
+                st.dataframe(comparison_df.style.format("{:.2f}"))
+
+                sr_b_clean = sr_b.dropna()
+                sr_d_clean = sr_d.dropna()
+
+                if sr_b_clean.empty or sr_d_clean.empty:
+                    st.warning("⚠️ Selection rates could not be interpreted numerically.")
+                else:
+                    majority_group = sr_b_clean.idxmax()
+                    minority_group = sr_b_clean.idxmin()
+
+                    delta_acc = acc_d - acc_b
+                    delta_dp = dp_b - dp_d
+
+                    insight = f"""
+                    After applying **ExponentiatedGradient**, the approval rate for **{minority_group}** applicants improved from **{sr_b[minority_group]:.0%}** to **{sr_d[minority_group]:.0%}**.
+                    The demographic parity gap decreased by **{delta_dp:.2f}**, while overall accuracy changed from **{acc_b:.1%}** to **{acc_d:.1%}** ({delta_acc:+.1%}).
+                    """
+                    st.success(insight.strip())
+            except Exception as e:
+                st.warning(f"⚠️ Could not generate summary insights: {e}")
 
         # 📤 Export Fairness Report
         st.markdown("### 📤 Download Fairness Report")
