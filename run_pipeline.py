@@ -21,7 +21,7 @@ os.makedirs(RESULT_DIR, exist_ok=True)
 # ───────────── Load Data ─────────────
 print("📥  Loading dataset...")
 df = pd.read_csv(DATA_PATH).dropna()
-
+df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_") 
 # ───────────── Encode Categorical Features ─────────────
 print("🔤  Encoding categorical variables...")
 label_encoders = {}

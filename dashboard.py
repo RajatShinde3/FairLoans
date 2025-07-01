@@ -1,6 +1,7 @@
 # dashboard.py · FairLoans Interactive Fairness Dashboard
 
-import os, joblib, shap, pandas as pd, numpy as np, streamlit as st
+import os, joblib, shap, json
+import pandas as pd, numpy as np, streamlit as st
 import seaborn as sns, matplotlib.pyplot as plt
 
 from pathlib import Path
@@ -8,7 +9,9 @@ from sklearn.metrics import (
     confusion_matrix, roc_curve, precision_recall_curve, accuracy_score
 )
 from fairlearn.metrics import (
-    MetricFrame, selection_rate, false_positive_rate, false_negative_rate
+    MetricFrame, selection_rate, false_positive_rate, false_negative_rate,
+    demographic_parity_difference, equal_opportunity_difference,
+    false_negative_rate_difference, equalized_odds_difference
 )
 
 # ───────────── Setup ─────────────
@@ -32,14 +35,12 @@ if not DATA_PATH.exists():
     st.error("`data/loan_dataset.csv` not found.")
     st.stop()
 raw_df = pd.read_csv(DATA_PATH)
+raw_df.columns = raw_df.columns.str.strip().str.lower().str.replace(" ", "_")
 
 # ───────────── CSV loader ─────────────
 def load_preds(file, raw_df):
     df = pd.read_csv(file)
-
-    # Lowercase column names
-    df.columns = df.columns.str.lower()
-    raw_df.columns = raw_df.columns.str.lower()
+    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
 
     # Ensure prediction columns
     missing = REQ - set(df.columns)
@@ -52,10 +53,9 @@ def load_preds(file, raw_df):
     df["y_pred"] = pd.to_numeric(df["y_pred"], errors="coerce")
     if "y_prob" in df.columns:
         df["y_prob"] = pd.to_numeric(df["y_prob"], errors="coerce")
-
     df.dropna(subset=list(REQ), inplace=True)
 
-    # Merge sensitive features from raw data if missing
+    # Merge sensitive features
     for col in ["gender", "race", "region"]:
         if col in raw_df.columns and col not in df.columns:
             df[col] = raw_df[col]
@@ -63,9 +63,10 @@ def load_preds(file, raw_df):
     return df
 
 # ───────────── Tabs ─────────────
-tab_over, tab_bias, tab_shap, tab_sim = st.tabs(
-    ["🏠 Overview", "⚖️ Fairness", "🔍 SHAP", "🧪 Simulator"]
+tab_over, tab_bias, tab_shap, tab_sim, tab_submit = st.tabs(
+    ["🏠 Overview", "⚖️ Fairness", "🔍 SHAP", "🧪 Simulator", "📤 Generate Submission"]
 )
+
 
 # ═════════════ 🏠 OVERVIEW ═════════════
 with tab_over:
@@ -86,62 +87,109 @@ with tab_bias:
         st.warning("Upload at least a *Baseline* CSV to begin.")
     else:
         df_base = load_preds(base_csv, raw_df)
-        df_deb  = load_preds(deb_csv, raw_df) if deb_csv else None
+        df_deb = load_preds(deb_csv, raw_df) if deb_csv else None
 
         sens_avail = [c for c in ["gender", "race", "region"] if c in df_base.columns]
         if not sens_avail:
             st.error("No sensitive features (`gender`, `race`, `region`) found.")
             st.stop()
-        sens = st.selectbox("Sensitive feature", sens_avail)
 
-        def metric_frame(df):
+        sens = st.radio("📌 Select Sensitive Feature", sens_avail, horizontal=True)
+
+        def compute_metric_frame(df, sens):
             df = df.dropna(subset=[sens, "y_true", "y_pred"])
             if df.empty:
                 return None
+
+            sensitive = df[sens]
+            y_true = df["y_true"]
+            y_pred = df["y_pred"]
+
             return MetricFrame(
                 metrics={
                     "Accuracy": accuracy_score,
                     "Selection Rate": selection_rate,
                     "FPR": false_positive_rate,
-                    "FNR": false_negative_rate,
+                    "FNR": false_negative_rate
                 },
-                y_true=df["y_true"],
-                y_pred=df["y_pred"],
-                sensitive_features=df[sens],
+                y_true=y_true,
+                y_pred=y_pred,
+                sensitive_features=sensitive
             )
+
+        def compute_overall_fairness(df, sens):
+            y_true = df["y_true"]
+            y_pred = df["y_pred"]
+            sensitive = df[sens]
+
+            return {
+                "Demographic Parity Diff": demographic_parity_difference(y_true, y_pred, sensitive_features=sensitive),
+                "Equal Opportunity Diff": equal_opportunity_difference(y_true, y_pred, sensitive_features=sensitive),
+                "FNR Difference": false_negative_rate_difference(y_true, y_pred, sensitive_features=sensitive),
+                "Equalized Odds Diff": equalized_odds_difference(y_true, y_pred, sensitive_features=sensitive)
+            }
+
+
 
         col1, col2 = st.columns(2)
 
-        # Baseline
+        # ───── Baseline ─────
         with col1:
             st.markdown("### Baseline")
-            mf_b = metric_frame(df_base)
+            mf_b = compute_metric_frame(df_base, sens)
             if mf_b is not None:
                 st.dataframe(mf_b.by_group)
-                fig, ax = plt.subplots(figsize=(5,3))
+                fig, ax = plt.subplots(figsize=(6, 3))
                 mf_b.by_group.T.plot(kind="bar", ax=ax)
                 ax.set_title(f"Baseline by {sens}")
+                ax.set_ylabel("Metric Value")
                 st.pyplot(fig)
+                st.markdown("#### 📋 Overall Baseline Metrics")
+                st.write(compute_overall_fairness(df_base, sens))
             else:
                 st.warning("No valid baseline rows.")
 
-        # Debiased
+        # ───── Debiased ─────
         with col2:
             st.markdown("### Debiased")
-            if df_deb is not None:
-                mf_d = metric_frame(df_deb)
-                if mf_d is not None:
-                    st.dataframe(mf_d.by_group)
-                    fig, ax = plt.subplots(figsize=(5,3))
-                    mf_d.by_group.T.plot(kind="bar", color="salmon", ax=ax)
-                    ax.set_title(f"Debiased by {sens}")
-                    st.pyplot(fig)
-                else:
-                    st.warning("No valid debiased rows.")
+            mf_d = compute_metric_frame(df_deb, sens) if df_deb is not None else None
+            if mf_d is not None:
+                st.dataframe(mf_d.by_group)
+                fig, ax = plt.subplots(figsize=(6, 3))
+                mf_d.by_group.T.plot(kind="bar", ax=ax, color="salmon")
+                ax.set_title(f"Debiased by {sens}")
+                ax.set_ylabel("Metric Value")
+                st.pyplot(fig)
+                st.markdown("#### 📋 Overall Debiased Metrics")
+                st.write(compute_overall_fairness(df_deb, sens))
             else:
                 st.info("Upload debiased CSV to compare.")
 
-        # ─── Performance Curves ───
+        if mf_b is not None and mf_d is not None:
+            st.markdown("### 🧯 Fairness Improvement Heatmap")
+            try:
+                gap = mf_b.by_group - mf_d.by_group
+                fig_gap, ax_gap = plt.subplots(figsize=(7, 4))
+                sns.heatmap(gap, annot=True, cmap="RdBu", center=0, ax=ax_gap)
+                ax_gap.set_title("Gap Reduction (Baseline − Debiased)")
+                st.pyplot(fig_gap)
+            except:
+                st.warning("Could not compute improvement heatmap.")
+
+        # 📤 Export Fairness Report
+        st.markdown("### 📤 Download Fairness Report")
+        fairness_report = {
+            "baseline": compute_overall_fairness(df_base, sens),
+            "debiased": compute_overall_fairness(df_deb, sens) if df_deb is not None else {}
+        }
+        st.download_button(
+            label="Download JSON Report",
+            data=json.dumps(fairness_report, indent=4),
+            file_name="fairness_report.json",
+            mime="application/json"
+        )
+
+        # ─── Confusion + ROC/PR ───
         st.markdown("---")
         st.subheader("Performance Curves")
         perf_cols = st.columns(2)
@@ -149,15 +197,14 @@ with tab_bias:
         for name, df_show, slot in [("Baseline", df_base, 0), ("Debiased", df_deb, 1)]:
             if df_show is None:
                 continue
-
             with perf_cols[slot]:
                 st.markdown(f"### {name}")
-
                 cm = confusion_matrix(df_show["y_true"], df_show["y_pred"])
                 fig_cm, ax_cm = plt.subplots()
                 sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax_cm)
                 ax_cm.set_title(f"{name} · Confusion Matrix")
-                ax_cm.set_xlabel("Predicted"); ax_cm.set_ylabel("Actual")
+                ax_cm.set_xlabel("Predicted")
+                ax_cm.set_ylabel("Actual")
                 st.pyplot(fig_cm)
 
                 if "y_prob" in df_show.columns and df_show["y_prob"].notna().all():
@@ -166,15 +213,17 @@ with tab_bias:
 
                     fig_roc, ax_roc = plt.subplots()
                     ax_roc.plot(fpr, tpr, label="ROC")
-                    ax_roc.plot([0,1],[0,1],"--")
+                    ax_roc.plot([0, 1], [0, 1], "--")
                     ax_roc.set_title(f"{name} · ROC")
-                    ax_roc.set_xlabel("FPR"); ax_roc.set_ylabel("TPR")
+                    ax_roc.set_xlabel("FPR")
+                    ax_roc.set_ylabel("TPR")
                     st.pyplot(fig_roc)
 
                     fig_pr, ax_pr = plt.subplots()
-                    ax_pr.plot(rec, prec, label="PR")
+                    ax_pr.plot(rec, prec)
                     ax_pr.set_title(f"{name} · Precision-Recall")
-                    ax_pr.set_xlabel("Recall"); ax_pr.set_ylabel("Precision")
+                    ax_pr.set_xlabel("Recall")
+                    ax_pr.set_ylabel("Precision")
                     st.pyplot(fig_pr)
                 else:
                     st.warning(f"{name}: `y_prob` missing — ROC/PR skipped.")
@@ -244,24 +293,20 @@ with tab_sim:
         if deb_path.exists():
             try:
                 model_deb = joblib.load(deb_path)
-
-                # ❶ Get features from model or fallback
-                if hasattr(model_deb, "get_booster"):  # XGBoost
+                if hasattr(model_deb, "get_booster"):
                     deb_feats = model_deb.get_booster().feature_names
-                elif hasattr(model_deb, "feature_names_in_"):  # sklearn
+                elif hasattr(model_deb, "feature_names_in_"):
                     deb_feats = list(model_deb.feature_names_in_)
-                elif feats_path.exists():  # fallback feature list
+                elif feats_path.exists():
                     deb_feats = joblib.load(feats_path)
                 else:
                     raise ValueError("No feature list found for debiased model.")
 
-                # ❷ Align input
                 for col in deb_feats:
                     if col not in X_user:
                         X_user[col] = 0
                 X_user_deb = X_user[deb_feats]
 
-                # ❸ Predict with or without probabilities
                 if hasattr(model_deb, "predict_proba"):
                     prob_deb = model_deb.predict_proba(X_user_deb)[0, 1]
                     verdict = '✅ Approved' if prob_deb >= 0.5 else '❌ Rejected'
@@ -274,6 +319,53 @@ with tab_sim:
                 st.error(f"Debiased model error: {e}")
         else:
             st.info("Debiased model not found.")
+
+# ═════════════ 📤 GENERATE SUBMISSION ═════════════
+with tab_submit:
+    st.header("📤 Generate Submission File")
+    try:
+        model = joblib.load("results/model_xgb.pkl")
+        encoders = joblib.load("results/label_encoders.pkl")
+    except Exception as e:
+        st.error(f"❌ Could not load model or encoders: {e}")
+        st.stop()
+
+    test_path = Path("data/test.csv")
+    if not test_path.exists():
+        st.error("❌ `data/test.csv` not found.")
+        st.stop()
+
+    test_df = pd.read_csv(test_path)
+    test_df.columns = test_df.columns.str.strip().str.lower().str.replace(" ", "_")
+
+    for col in test_df.columns:
+        if col in encoders:
+            test_df[col] = encoders[col].transform(test_df[col].astype(str))
+        elif test_df[col].dtype == object:
+            st.warning(f"⚠️ Unencoded column '{col}' — filling with -1")
+            test_df[col] = -1
+
+    X_test = test_df.copy()
+    id_col = X_test["id"] if "id" in X_test.columns else np.arange(len(X_test))
+
+    try:
+        probs = model.predict_proba(X_test)[:, 1]
+        preds = (probs >= 0.5).astype(int)
+        submission = pd.DataFrame({
+            "ID": id_col,
+            "LoanApproved": preds
+        })
+        st.dataframe(submission.head())
+
+        csv = submission.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 Download Submission CSV",
+            data=csv,
+            file_name="submission.csv",
+            mime="text/csv"
+        )
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
 
 
 # ───────────── Footer ─────────────
