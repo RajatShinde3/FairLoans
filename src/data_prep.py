@@ -15,7 +15,8 @@ def load_and_prepare_data(data_path):
 
     # Check for expected target column
     if 'loan_approved' not in df.columns:
-        raise ValueError("[❌] Target column 'loan_approved' not found in dataset.\n[ℹ️] Make sure your dataset has a 'loan_approved' column as the target.")
+        raise ValueError("[❌] Target column 'loan_approved' not found in dataset." \
+        "\n[ℹ️] Make sure your dataset has a 'loan_approved' column as the target.")
 
     # Normalize target values: Approved → 1, Denied → 0
     if df['loan_approved'].dtype == object:

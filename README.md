@@ -171,6 +171,10 @@ The project uses Fairlearn's `MetricFrame` and `ExponentiatedGradient` algorithm
 
 SHAP summary plots explain how features like `income`, `credit_score`, and `loan_amount` influence predictions.
 
+## Project Report
+
+📥 [Download Full Report (PDF)](./demo/ai_risk_report.pdf)
+
 ## Demo Video
 
 👉 Coming soon

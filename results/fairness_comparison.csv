@@ -1,0 +1,4 @@
+Metric,Baseline Model,Debiased Model
+Accuracy,0.646,0.58
+Demographic Parity Diff,0.103,0.01
+Equal Opportunity Diff,0.126,0.029
