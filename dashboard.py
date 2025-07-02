@@ -163,8 +163,15 @@ with tab_bias:
         st.markdown("### 📌 Summary Insights")
         if mf_b is not None and mf_d is not None:
             try:
-                sr_b = pd.to_numeric(mf_b.by_group["Selection Rate"], errors="coerce")
-                sr_d = pd.to_numeric(mf_d.by_group["Selection Rate"], errors="coerce")
+                sr_b = mf_b.by_group["Selection Rate"]
+                sr_d = mf_d.by_group["Selection Rate"]
+
+                # 🔐 Fix mixed-type indices (e.g., int vs str)
+                sr_b.index = sr_b.index.astype(str)
+                sr_d.index = sr_d.index.astype(str)
+
+                sr_b = pd.to_numeric(sr_b, errors="coerce")
+                sr_d = pd.to_numeric(sr_d, errors="coerce")
 
                 acc_b = accuracy_score(df_base["y_true"], df_base["y_pred"])
                 acc_d = accuracy_score(df_deb["y_true"], df_deb["y_pred"])
@@ -182,11 +189,7 @@ with tab_bias:
                 st.dataframe(comparison_df.style.format("{:.2f}"))
 
                 sr_b_clean = sr_b.dropna()
-                sr_d_clean = sr_d.dropna()
-
-                if sr_b_clean.empty or sr_d_clean.empty:
-                    st.warning("⚠️ Selection rates could not be interpreted numerically.")
-                else:
+                if not sr_b_clean.empty:
                     majority_group = sr_b_clean.idxmax()
                     minority_group = sr_b_clean.idxmin()
 
@@ -198,6 +201,8 @@ with tab_bias:
                     The demographic parity gap decreased by **{delta_dp:.2f}**, while overall accuracy changed from **{acc_b:.1%}** to **{acc_d:.1%}** ({delta_acc:+.1%}).
                     """
                     st.success(insight.strip())
+                else:
+                    st.warning("⚠️ No valid numeric selection rates to generate insights.")
             except Exception as e:
                 st.warning(f"⚠️ Could not generate summary insights: {e}")
 
@@ -213,6 +218,7 @@ with tab_bias:
             file_name="fairness_report.json",
             mime="application/json"
         )
+
 
         # ─── Confusion + ROC/PR ───
         st.markdown("---")
